@@ -1,0 +1,293 @@
+---
+title: "ERGM tutorial"
+output:
+  pdf_document: 
+    extra_dependencies: ['amsmath', 'amssymb', 'mathtools', 'amsthm','enumerate']
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# DBA5104 ERGM tutorial
+
+Exponential random graph models (ERGMs) are a family of statistical models that 
+are designed in direct analogy to the classical generalized linear models. The 
+goal of ERGMs is to “describe parsimoniously the local selection forces that 
+shape the global structure of a network” (Hunter et al. 2008). An ERGM model can
+be specified in the following form,
+
+$$\mathbf{P}_{\theta}(Y = y) = \frac{1}{\kappa}exp(\sum_i\theta_ig_i(y))$$
+where $Y$ is the (random) adjacency matrix of the graph $G$ and $y$ is a 
+realization of $Y$. $\kappa$ is the normalization constant, which is defined as
+$\sum_yexp(\sum_i\theta_ig_i(y))$. $\theta_i$ is the coefficient to the 
+statistic, $g_i$.
+
+For example,
+$$\mathbf{P}_{\theta}(g) = \frac{exp(\theta_1m(g)+\theta_2T(g)+\theta_3S_2(g)+\theta_4D_1(g))}{\kappa}$$
+where $m(g)$ is the number of edges, $T(g)$ the number of triangles,
+$S_2(g)$ the number of 2-stars (=number of connected triples) and
+$D_1(g)$ the number of nodes with degree 1, in the graph $g$ that you observed. 
+ERGM for directed graphs are defined in essentially the same way as for 
+undirected graphs.
+
+Note that there are other statistics that you can consider such as geometrically 
+weighted edgewise shared partner count (GWESP) and geometrically weighted degree 
+count (GWD) -- see Kolaczyk Chapter 6.2.2. For example, the advantage of GWESP 
+over the vanilla $T(g)$, is that for a near complete graph, $T(g)$ is much 
+larger than the number of edges, whereas there is an upper bound to GWESP.
+
+We can also add node-specific covariates, $x$ into the ERGM.
+$$\mathbf{P}_{\theta,\beta}(Y = y, X = x) = \frac{1}{\kappa}exp(\sum_i\theta_ig_i(y) + \sum_j\beta_jh_j(x))$$
+where $\beta$ is the coefficient to the node-specific covariates. Can you see 
+that setting $\theta = 0$ puts us back to the logistic model?
+
+Our objective is to find $\theta$ (and $\beta$) to maximize the likelihood. Due 
+to the complicated expression shown above, it is difficult to do the 
+maximization using usual numerical methods. So, we resort to Monte-Carlo Markov 
+Chain (MCMC). These are done within the ergm package, there is no need for you 
+to work separately on the MCMC. 
+
+Also, as a rule of thumb, we start with a handful of statistics (would be good 
+to have some domain knowledge to guide the selection). Then, we adjust the 
+statistics according to the p-values, AIC, BIC etc over several iterations.
+
+## Interpreting the coefficients
+
+What are the intepretations of the coefficients when their p-values are very 
+small? One way to think about the effect of the terms is to consider some
+fixed graph $g$ and analyze what happens when we insert a new edge $e_{uv}$ 
+to form a new graph $h$. 
+
+For example, for the statistic $T(g)$, we have
+$$T(h) = T(g) + c_{uv}$$
+where $c_{uv}$ is the number of common neighbors of $u$ and $v$ (in graph $g$).
+Hence if the corresponding coefficient is positive, then the model favors 
+linking two nodes with many common neighbors. The model is thus transitive.
+
+Another example, for the statistic $S_2(g)$
+we have
+$$S_2(h) = S_2(g) + deg(u) + deg(v)$$
+Hence if the corresponding coefficient is positive, then the model favors 
+linking nodes with high degrees. The model is one with preferential attachment.
+
+There are other analyses that can be done such as odds and change 
+statistics. Let the observed graph be $g$ and the observed node-specific 
+covariates as $x$.
+
+Consider an edge $e_{uv}$ and let $g_{-}$ be the graph $g$ without $e_{uv}$ and 
+$g_{+}$ be the graph $g$ with $e_{uv}$. Then, the change statistic computes the
+difference of a specified network statistic based on $g_{-}$ and $g_{+}$. For 
+example,
+$$\delta_m(u, v) = m(g_{+}) - m(g_{-})$$
+For the odds, we take the ratio of the probabilities of observing $g_{+}$ and 
+$g_{-}$.
+
+All of these can be used for link prediction. Some motivations could be,
+\begin{enumerate}
+\item The graph is evolving and new links are formed over time (e.g.
+social networks). We want to predict future links.
+\item It is expensive to establish a link (e.g. biological networks). We
+have an incomplete network and link prediction is used to allocate
+resources to the establishment of new links.
+\item We want to validate a model. We fit a model with some links
+removed and use link prediction on the fitted model to see if the
+missing links are predicted
+\end{enumerate}
+
+After the ERGM has been fitted, we can predict links simply by searching for 
+where the probability of a graph with the additional link is large. 
+
+## Statnet package
+
+We can do statistical modeling of network data with ERGMs using the statnet 
+software. There are many variants to ERGMs, but we will focus on the basic 
+version. If you need more help, see
+https://statnet.org/workshop-ergm/
+https://statnet.org/workshops/
+
+```{r}
+#install.packages("igraph")
+#install.packages("ergm")
+#install.packages("network")
+
+library(igraph)
+library(ergm)
+library(network)
+```
+
+```{r}
+data(package='ergm') # tells us the datasets in our packages
+```
+
+We use Padgett’s data on Renaissance Florentine families for our first example. 
+This dataset (provided by Padgett and Ansell) is about the network of marriages
+between some key families in Florence in the 1430s, where a link represents a 
+marriage between members of two families.
+
+A bit of history: In this period of time, The Medici family is an influential 
+family in Florence. We observe that the Medicis do not have a lot of wealth nor 
+great political influence. However, there are notable insights when we look at 
+the structure of social relationships to understand why the Medici rose in 
+power. 
+
+As with all data analysis, it is good practice to start by summarizing our data 
+using graphical and numerical descriptives.
+
+```{r}
+set.seed(123) # The plot.network function uses random values
+data(florentine) # loads flomarriage and flobusiness data
+# florentine
+```
+
+```{r}
+par(mfrow=c(1,2)) # Set up a 2-column (and 1-row) plot area
+plot(flomarriage, 
+     main="Florentine Marriage", 
+     cex.main=0.8, 
+     label = network.vertex.names(flomarriage)) # Equivalent to plot.network(...)
+wealth <- flomarriage %v% 'wealth' # %v% references vertex attributes
+# wealth
+```
+
+```{r}
+plot(flomarriage, 
+     vertex.cex=wealth/25, # Make vertex size proportional to wealth attribute
+     main="Florentine marriage by wealth", cex.main=0.8) 
+```
+
+We’ll start by running some simple models to demonstrate the most commonly used 
+functions for ERG modeling.
+
+The syntax for specifying a model in the ergm package follows R’s formula 
+convention:
+
+$$\text{my.network } \sim \text{ my.model.terms}$$
+
+This syntax is used for both the $\textit{summary}$ and $\textit{ergm}$ 
+functions. The summary function simply returns the numerical values of the 
+network statistics in the model. The ergm function estimates the model with 
+those statistics.
+
+It is good practice to run a $\textit{summary}$ command on any model before 
+fitting it with ergm. This is the ERGM equivalent of performing some descriptive 
+analysis on your covariates. This can help you make sure you understand what the 
+term represents, and it can help to flag potential problems that will lead to 
+poor modeling results. We will now demonstrate the $\textit{summary}$ and 
+$\textit{ergm}$ commands using a simple model.
+
+### A Bernoulli ("Erdős/Rényi") model
+We begin with a simple model, containing only one term that represents the total 
+number of edges in the network. The name of this ergm-term is $\textbf{edges}$, 
+and when included in an ERGM its coefficient controls the overall density of the 
+network.
+
+```{r}
+summary(flomarriage ~ edges)
+```
+
+```{r}
+flomodel.01 <- ergm(flomarriage ~ edges) # Estimate the model 
+```
+
+Don't worry about the Maximum Pseudo-Likelihood Estimates (MPLE). Often in ERGM,
+it initializes with the MPLE before proceeding to find the MLE using MCMC. 
+
+```{r}
+summary(flomodel.01)
+```
+
+Let’s add a term often thought to be a measure of “clustering”: the number of 
+completed triangles in the network. The name for this ergm-term is $\textbf{triangle}$.
+
+```{r}
+set.seed(321)
+summary(flomarriage~edges+triangle)
+```
+
+```{r}
+flomodel.02 <- ergm(flomarriage~edges+triangle) # Estimate the theta coefficients
+summary(flomodel.02)
+```
+
+```{r}
+coef(flomodel.02)
+```
+
+### Nodal covariates: effects on mean degree
+We saw earlier that wealth appeared to be associated with higher degree in this 
+network. We can use ergm to test this. Wealth is a nodal covariate, so we use 
+the ergm-term $\textbf{nodecov}$.
+
+```{r}
+summary(flomarriage~edges+nodecov('wealth'))
+```
+
+```{r}
+flomodel.03 <- ergm(flomarriage~edges+nodecov('wealth'))
+summary(flomodel.03)
+```
+
+```{r}
+coef(flomodel.02)
+```
+
+There are other nodal covariates such as
+\begin{enumerate}
+\item Homophily by property: ergm-term $\textbf{nodematch}(property)$
+\item Directed ties (tendency for ties to be reciprocated): ergm-term $\textbf{mutual}$
+\end{enumerate}
+
+Much more ergm-terms are found here: https://statnet.org/nme/d2-ergmterms.html
+
+We note that for models that use dyad-dependent statistics, it is important to 
+assess model convergence before interpreting the model results, i.e., before 
+evaluating statistical significance, interpreting coefficients, or assessing 
+goodness of fit. We can check the MCMC diagnostics (see Section 4 of ergm 
+tutorial). An example of dyad-dependent statistic is a degree(1) term, which 
+captures whether there are more (or less) degree 1 nodes than we would 
+expect, given the density.
+
+A few things that the ergm package can do 
+(see https://statnet.org/workshop-ergm/ergm_tutorial.html):
+\begin{enumerate}
+\item Dealing with Missing Data (Section 2)
+\item Network Simulation (Section 5)
+Once we have estimated the coefficients of an ERGM, the model is completely 
+specified. It defines a probability distribution across all networks on the 
+given set of nodes. If the model is a good fit to the observed data, then 
+networks drawn from this distribution will be more likely to “resemble” the 
+observed data. Thus, one way we use simulations from a model is to assess that 
+model’s goodness of fit to our data.
+\item Quality of fit (Section 6)
+One test of whether an ERGM fits the data is therefore how well it reproduces 
+observed global network properties that are not in the model. We do this by 
+using the $\textbf{gof}$ function to choose network statistics that are not in 
+the model, then compare the values of these statistics observed in the original 
+network to the distribution of values we get in simulated networks from our 
+model.
+\end{enumerate}
+
+## References
+
+Hunter, D.R., S. M. Goodreau, and M. S. Handcock. 2008. “Goodness of Fit of 
+Social Network Models.” Journal of the American Statistical Association 103 
+(481): 248–58. doi:10.1198/016214507000000446.
+
+Statistical Analysis of Network Data with R; Eric D. Kolaczyk, Gábor Csárdi
+
+Robust Action and the Rise of the Medici, 1400-1434
+John F. Padgett and Christopher K. Ansell
+
+ERGM using statnet tutorial, 
+Pavel N. Krivitsky (University of New South Wales)
+Martina Morris (University of Washington)
+Mark S. Handcock (University of California, Los Angeles)
+Carter T. Butts (University of California, Irvine)
+David R. Hunter (Penn State University)
+Steven M. Goodreau (University of Washington)
+Chad Klumb (University of Washington)
+Skye Bender de-Moll (Oakland, CA)
+Michał Bojanowski (Kozminski University, Poland)
